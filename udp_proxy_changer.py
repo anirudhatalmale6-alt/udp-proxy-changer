@@ -8,6 +8,7 @@ from tkinter import messagebox
 import threading
 import json
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 try:
     import urllib.request
@@ -129,7 +130,7 @@ class WebRTCChangerApp:
 
         tk.Label(row3, text='Value:', font=('Segoe UI', 10),
                  fg='#fff', bg='#1a1a2e').pack(side='left')
-        self.bulk_var = tk.StringVar(value='proxy')
+        self.bulk_var = tk.StringVar(value='disable_udp')
         bulk_menu = tk.OptionMenu(row3, self.bulk_var, *values)
         bulk_menu.configure(font=('Consolas', 11), fg='#FFD700',
                              bg='#0f3460', activebackground='#16213e',
@@ -259,8 +260,22 @@ class WebRTCChangerApp:
         self.running = True
         self.start_btn.configure(state='disabled', text='Working...')
 
+        def update_one(uid, sn):
+            for attempt in range(5):
+                r = api_post('/api/v1/user/update', {
+                    'user_id': uid,
+                    'fingerprint_config': {'webrtc': target}
+                })
+                if r.get('code') == 0:
+                    return (sn, True, '')
+                if 'Too many request' in r.get('msg', ''):
+                    time.sleep(2)
+                else:
+                    return (sn, False, r.get('msg', ''))
+            return (sn, False, 'rate limit')
+
         def do_change():
-            time.sleep(2)
+            time.sleep(1)
             page = 1
             success = 0
             failed = 0
@@ -277,8 +292,6 @@ class WebRTCChangerApp:
                     if resp.get('code') == 0:
                         break
                     if 'Too many request' in resp.get('msg', ''):
-                        self.root.after(0, lambda a=attempt: self._log(
-                            f'Rate limited, waiting... (retry {a+1}/5)'))
                         time.sleep(3)
                     else:
                         break
@@ -292,40 +305,26 @@ class WebRTCChangerApp:
                 if not profiles:
                     break
 
-                for p in profiles:
-                    uid = p.get('user_id', '')
-                    sn = p.get('serial_number', '')
-                    total += 1
+                batch = [(p.get('user_id', ''), p.get('serial_number', '')) for p in profiles]
 
-                    update_resp = None
-                    for attempt in range(3):
-                        update_resp = api_post('/api/v1/user/update', {
-                            'user_id': uid,
-                            'fingerprint_config': {'webrtc': target}
-                        })
-                        if update_resp.get('code') == 0:
-                            break
-                        if 'Too many request' in update_resp.get('msg', ''):
-                            time.sleep(1.5)
+                with ThreadPoolExecutor(max_workers=5) as executor:
+                    futures = {executor.submit(update_one, uid, sn): sn for uid, sn in batch}
+                    for future in as_completed(futures):
+                        sn, ok, msg = future.result()
+                        total += 1
+                        if ok:
+                            success += 1
                         else:
-                            break
+                            failed += 1
+                            self.root.after(0, lambda s=sn, m=msg:
+                                self._log(f'#{s}: FAILED - {m}'))
 
-                    if update_resp.get('code') == 0:
-                        success += 1
-                    else:
-                        failed += 1
-                        msg = update_resp.get('msg', '')
-                        self.root.after(0, lambda s=sn, m=msg:
-                            self._log(f'#{s}: FAILED - {m}'))
-
-                    if total % 10 == 0:
-                        self.root.after(0, lambda t=total, s=success, f=failed:
-                            self.progress_label.configure(
-                                text=f'Progress: {t} done, {s} ok, {f} failed'))
-
-                    time.sleep(0.5)
+                self.root.after(0, lambda t=total, s=success, f=failed:
+                    self.progress_label.configure(
+                        text=f'Progress: {t} done, {s} ok, {f} failed'))
 
                 page += 1
+                time.sleep(1)
 
             self.root.after(0, lambda: self._log(
                 f'DONE! {scope}: {success} changed. '
