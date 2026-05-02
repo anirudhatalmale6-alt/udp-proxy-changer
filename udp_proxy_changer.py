@@ -239,6 +239,7 @@ class UDPProxyChangerApp:
         self.start_btn.configure(state='disabled', text='Working...')
 
         def do_change():
+            time.sleep(3)
             page = 1
             success = 0
             failed = 0
@@ -250,7 +251,18 @@ class UDPProxyChangerApp:
                 if group_id:
                     url += f'&group_id={group_id}'
 
-                resp = api_get(url)
+                resp = None
+                for attempt in range(5):
+                    resp = api_get(url)
+                    if resp.get('code') == 0:
+                        break
+                    if 'Too many request' in resp.get('msg', ''):
+                        self.root.after(0, lambda a=attempt: self._log(
+                            f'Rate limited, waiting... (retry {a+1}/5)'))
+                        time.sleep(3)
+                    else:
+                        break
+
                 if resp.get('code') != 0:
                     self.root.after(0, lambda: self._log(
                         f'API error on page {page}: {resp.get("msg", "")}'))
