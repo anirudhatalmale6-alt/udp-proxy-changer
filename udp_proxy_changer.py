@@ -112,11 +112,17 @@ class WebRTCChangerApp:
                   cursor='hand2', command=self._start_change)
         self.start_btn.pack(side='left', padx=5)
 
-        tk.Button(bf, text='SCAN 1 PROFILE',
+        tk.Button(bf, text='START TEST',
                   font=('Segoe UI', 10, 'bold'),
                   fg='#fff', bg='#0f3460', activebackground='#16213e',
                   border=0, padx=12, pady=8,
                   cursor='hand2', command=self._scan_profile).pack(side='left', padx=5)
+
+        tk.Button(bf, text='NEXT VALUE',
+                  font=('Segoe UI', 10, 'bold'),
+                  fg='#fff', bg='#0f3460', activebackground='#16213e',
+                  border=0, padx=12, pady=8,
+                  cursor='hand2', command=self._apply_next_value).pack(side='left', padx=5)
 
         self.progress_label = tk.Label(self.root, text='',
                  font=('Segoe UI', 11, 'bold'),
@@ -233,8 +239,14 @@ class WebRTCChangerApp:
     def _scan_profile(self):
         if self.running:
             return
+        self.running = True
 
-        def do_scan():
+        self._test_uid = ''
+        self._test_sn = ''
+        self._test_values = ['forward', 'proxy', 'local', 'disabled', 'disable_udp']
+        self._test_index = 0
+
+        def do_find():
             selected = self.group_var.get()
             group_id = self.groups.get(selected)
 
@@ -255,53 +267,54 @@ class WebRTCChangerApp:
             if resp.get('code') != 0:
                 self.root.after(0, lambda: self._log(
                     f'API error: {resp.get("msg", "")}'))
+                self.running = False
                 return
 
             profiles = resp.get('data', {}).get('list', [])
             if not profiles:
                 self.root.after(0, lambda: self._log('No profiles found'))
+                self.running = False
                 return
 
             p = profiles[0]
-            uid = p.get('user_id', '')
-            sn = p.get('serial_number', '?')
+            self._test_uid = p.get('user_id', '')
+            self._test_sn = p.get('serial_number', '?')
 
             self.root.after(0, lambda: self._log(
-                f'Testing on Profile #{sn} (user_id: {uid})'))
+                f'Using Profile #{self._test_sn}'))
             self.root.after(0, lambda: self._log(
-                'Trying different field names and values...'))
-
-            tests = [
-                {'fingerprint_config': {'webrtc': 'proxy'}},
-                {'fingerprint_config': {'webrtc': 'proxy_udp'}},
-                {'fingerprint_config': {'webrtc': '4'}},
-                {'fingerprint_config': {'webrtc': '5'}},
-                {'fingerprint_config': {'webrtc': 4}},
-                {'fingerprint_config': {'webrtc': 5}},
-                {'fingerprint_config': {'webRTC': 'proxy'}},
-                {'fingerprint_config': {'webrtc_config': {'type': 'proxy'}}},
-                {'fingerprint_config': {'webrtc_config': 'proxy'}},
-            ]
-
-            for i, test_data in enumerate(tests):
-                time.sleep(2)
-                test_data['user_id'] = uid
-                label = json.dumps({k: v for k, v in test_data.items() if k != 'user_id'})
-                r = api_post('/api/v1/user/update', test_data)
-                code = r.get('code', -1)
-                msg = r.get('msg', '')
-                self.root.after(0, lambda n=i+1, l=label, c=code, m=msg:
-                    self._log(f'Test {n}: {l} => code={c} msg={m}'))
-
-            self.root.after(0, lambda: self._log(''))
+                'Click "NEXT VALUE" to apply each value one by one.'))
             self.root.after(0, lambda: self._log(
-                f'ALL TESTS DONE on Profile #{sn}'))
-            self.root.after(0, lambda: self._log(
-                'Check this profile in AdsPower - is WebRTC set to Proxy UDP now?'))
-            self.root.after(0, lambda: self._log(
-                'If yes, tell me which test number worked (check after each one)'))
+                'Check AdsPower after each click to see what it shows.'))
+            self.root.after(0, self._apply_next_value)
 
-        threading.Thread(target=do_scan, daemon=True).start()
+        threading.Thread(target=do_find, daemon=True).start()
+
+    def _apply_next_value(self):
+        if self._test_index >= len(self._test_values):
+            self._log('All values tested!')
+            self.running = False
+            return
+
+        val = self._test_values[self._test_index]
+
+        def do_apply():
+            time.sleep(1)
+            r = api_post('/api/v1/user/update', {
+                'user_id': self._test_uid,
+                'fingerprint_config': {'webrtc': val}
+            })
+            code = r.get('code', -1)
+            msg = r.get('msg', '')
+            self._test_index += 1
+            self.root.after(0, lambda: self._log(
+                f'SET webrtc="{val}" => code={code} msg={msg}'))
+            self.root.after(0, lambda: self._log(
+                f'>> Check Profile #{self._test_sn} in AdsPower now. What does WebRTC show?'))
+            self.root.after(0, lambda: self._log(
+                f'>> Then click "NEXT VALUE" to try the next one.'))
+
+        threading.Thread(target=do_apply, daemon=True).start()
 
         threading.Thread(target=do_scan, daemon=True).start()
 
