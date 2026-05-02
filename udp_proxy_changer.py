@@ -263,22 +263,69 @@ class WebRTCChangerApp:
                 return
 
             p = profiles[0]
+            uid = p.get('user_id', '')
             sn = p.get('serial_number', '?')
-            fp = p.get('fingerprint_config', {})
 
             self.root.after(0, lambda: self._log(
-                f'--- Profile #{sn} fingerprint_config ---'))
+                f'Profile #{sn} (user_id: {uid})'))
+            self.root.after(0, lambda: self._log(
+                f'List API keys: {", ".join(sorted(p.keys()))}'))
 
-            for key in sorted(fp.keys()):
-                val = fp[key]
-                if isinstance(val, dict):
-                    self.root.after(0, lambda k=key, v=json.dumps(val):
-                        self._log(f'  {k}: {v}'))
+            fp = p.get('fingerprint_config', {})
+            if fp:
+                self.root.after(0, lambda: self._log(
+                    f'fingerprint_config from list: {json.dumps(fp)[:500]}'))
+            else:
+                self.root.after(0, lambda: self._log(
+                    'fingerprint_config empty in list API'))
+
+            time.sleep(2)
+            detail_resp = api_get(f'/api/v1/user/detail?user_id={uid}')
+            if detail_resp.get('code') == 0:
+                d = detail_resp.get('data', {})
+                dfp = d.get('fingerprint_config', {})
+                self.root.after(0, lambda: self._log(
+                    f'--- Detail API fingerprint_config ---'))
+                if dfp:
+                    for key in sorted(dfp.keys()):
+                        val = dfp[key]
+                        text = json.dumps(val) if isinstance(val, (dict, list)) else str(val)
+                        if len(text) > 200:
+                            text = text[:200] + '...'
+                        self.root.after(0, lambda k=key, v=text:
+                            self._log(f'  {k}: {v}'))
                 else:
-                    self.root.after(0, lambda k=key, v=val:
-                        self._log(f'  {k}: {v}'))
+                    self.root.after(0, lambda: self._log('  (empty)'))
+                self.root.after(0, lambda: self._log('--- End detail ---'))
+            else:
+                self.root.after(0, lambda: self._log(
+                    f'Detail API: {detail_resp.get("msg", "not available")}'))
 
-            self.root.after(0, lambda: self._log('--- End of config ---'))
+            time.sleep(2)
+            info_resp = api_get(f'/api/v1/user/info?user_id={uid}')
+            if info_resp.get('code') == 0:
+                d = info_resp.get('data', {})
+                ifp = d.get('fingerprint_config', {})
+                self.root.after(0, lambda: self._log(
+                    f'--- Info API fingerprint_config ---'))
+                if ifp:
+                    for key in sorted(ifp.keys()):
+                        val = ifp[key]
+                        text = json.dumps(val) if isinstance(val, (dict, list)) else str(val)
+                        if len(text) > 200:
+                            text = text[:200] + '...'
+                        self.root.after(0, lambda k=key, v=text:
+                            self._log(f'  {k}: {v}'))
+                else:
+                    self.root.after(0, lambda: self._log('  (empty)'))
+                self.root.after(0, lambda: self._log('--- End info ---'))
+            else:
+                self.root.after(0, lambda: self._log(
+                    f'Info API: {info_resp.get("msg", "not available")}'))
+
+            self.root.after(0, lambda: self._log('SCAN DONE'))
+
+        threading.Thread(target=do_scan, daemon=True).start()
 
         threading.Thread(target=do_scan, daemon=True).start()
 
