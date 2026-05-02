@@ -1,7 +1,6 @@
 """
-Bulk UDP Proxy Changer for AdsPower
-Pick a folder, change all proxy types to socks5 (UDP) at once.
-Keeps existing proxy host/port/credentials - only changes the type.
+Bulk WebRTC Changer for AdsPower
+Pick a folder, change WebRTC fingerprint to Proxy UDP for all profiles.
 """
 
 import tkinter as tk
@@ -42,10 +41,10 @@ def api_post(path, data=None):
         return {'code': -1, 'msg': str(e)}
 
 
-class UDPProxyChangerApp:
+class WebRTCChangerApp:
     def __init__(self):
         self.root = tk.Tk()
-        self.root.title('AdsPower Bulk Proxy Type Changer')
+        self.root.title('AdsPower Bulk WebRTC Changer')
         self.root.geometry('550x520')
         self.root.resizable(True, True)
         self.root.configure(bg='#1a1a2e')
@@ -65,11 +64,11 @@ class UDPProxyChangerApp:
         self.log_text.configure(state='disabled')
 
     def _build_ui(self):
-        tk.Label(self.root, text='BULK PROXY TYPE CHANGER',
+        tk.Label(self.root, text='BULK WEBRTC CHANGER',
                  font=('Segoe UI', 16, 'bold'),
                  fg='#e94560', bg='#1a1a2e').pack(pady=(15, 3))
 
-        tk.Label(self.root, text='Change proxy type for all profiles in a folder',
+        tk.Label(self.root, text='Change WebRTC fingerprint setting for all profiles in a folder',
                  font=('Segoe UI', 9), fg='#8888aa', bg='#1a1a2e').pack(pady=(0, 10))
 
         gf = tk.Frame(self.root, bg='#1a1a2e')
@@ -89,27 +88,24 @@ class UDPProxyChangerApp:
                   fg='#fff', bg='#0f3460', border=0, padx=8, pady=2,
                   cursor='hand2', command=self._load_groups).pack(side='right', padx=(8, 0))
 
-        pf = tk.Frame(self.root, bg='#1a1a2e')
-        pf.pack(fill='x', padx=20, pady=5)
+        wf = tk.Frame(self.root, bg='#1a1a2e')
+        wf.pack(fill='x', padx=20, pady=5)
 
-        tk.Label(pf, text='Proxy Type:', font=('Segoe UI', 11, 'bold'),
+        tk.Label(wf, text='WebRTC:', font=('Segoe UI', 11, 'bold'),
                  fg='#FFD700', bg='#1a1a2e').pack(side='left')
 
-        self.proxy_type_var = tk.StringVar(value='socks5')
-        types = ['socks5', 'http', 'https', 'socks4']
-        type_menu = tk.OptionMenu(pf, self.proxy_type_var, *types)
-        type_menu.configure(font=('Consolas', 13, 'bold'), fg='#FFD700',
+        self.webrtc_var = tk.StringVar(value='Proxy UDP')
+        options = ['Proxy UDP', 'Forward', 'Replace', 'Real', 'Disabled']
+        option_menu = tk.OptionMenu(wf, self.webrtc_var, *options)
+        option_menu.configure(font=('Consolas', 13, 'bold'), fg='#FFD700',
                              bg='#0f3460', activebackground='#16213e',
-                             highlightthickness=0, width=8)
-        type_menu.pack(side='left', padx=(8, 0))
-
-        tk.Label(pf, text='(socks5 = UDP support)',
-                 font=('Segoe UI', 9), fg='#44dd44', bg='#1a1a2e').pack(side='left', padx=(10, 0))
+                             highlightthickness=0, width=12)
+        option_menu.pack(side='left', padx=(8, 0))
 
         bf = tk.Frame(self.root, bg='#1a1a2e')
         bf.pack(pady=12)
 
-        self.start_btn = tk.Button(bf, text='CHANGE PROXY TYPE FOR FOLDER',
+        self.start_btn = tk.Button(bf, text='CHANGE WEBRTC FOR FOLDER',
                   font=('Segoe UI', 12, 'bold'),
                   fg='#fff', bg='#e94560', activebackground='#ff6b8a',
                   border=0, padx=20, pady=8,
@@ -129,6 +125,16 @@ class UDPProxyChangerApp:
         self.log_text.pack(fill='both', expand=True, pady=2)
 
         self._log('Loading groups from AdsPower...')
+
+    def _get_api_value(self, display):
+        mapping = {
+            'Proxy UDP': 'proxy',
+            'Forward': 'forward',
+            'Replace': 'replace',
+            'Real': 'real',
+            'Disabled': 'disabled'
+        }
+        return mapping.get(display, 'proxy')
 
     def _load_groups(self):
         def do_load():
@@ -222,16 +228,15 @@ class UDPProxyChangerApp:
         if self.running:
             return
 
-        target_type = self.proxy_type_var.get()
+        display_val = self.webrtc_var.get()
+        api_val = self._get_api_value(display_val)
         selected = self.group_var.get()
         group_id = self.groups.get(selected)
         scope = selected if group_id else 'ALL PROFILES'
 
         if not messagebox.askyesno('Confirm',
-                f'Change proxy type to {target_type.upper()}\n'
+                f'Change WebRTC to {display_val}\n'
                 f'for: {scope}?\n\n'
-                f'This only changes the proxy type.\n'
-                f'Host, port, and credentials stay the same.\n\n'
                 f'Open profiles need to be closed & reopened.'):
             return
 
@@ -243,7 +248,6 @@ class UDPProxyChangerApp:
             page = 1
             success = 0
             failed = 0
-            skipped = 0
             total = 0
 
             while True:
@@ -277,29 +281,10 @@ class UDPProxyChangerApp:
                     sn = p.get('serial_number', '')
                     total += 1
 
-                    proxy_cfg = p.get('user_proxy_config') or {}
-                    current_type = proxy_cfg.get('proxy_type', '')
-                    proxy_host = proxy_cfg.get('proxy_host', '')
-
-                    if not proxy_host:
-                        skipped += 1
-                        self.root.after(0, lambda s=sn:
-                            self._log(f'#{s}: SKIPPED - no proxy configured'))
-                        continue
-
-                    if current_type == target_type:
-                        skipped += 1
-                        continue
-
                     update_data = {
                         'user_id': uid,
-                        'user_proxy_config': {
-                            'proxy_soft': proxy_cfg.get('proxy_soft', 'other'),
-                            'proxy_type': target_type,
-                            'proxy_host': proxy_host,
-                            'proxy_port': str(proxy_cfg.get('proxy_port', '')),
-                            'proxy_user': proxy_cfg.get('proxy_user', ''),
-                            'proxy_password': proxy_cfg.get('proxy_password', '')
+                        'fingerprint_config': {
+                            'webrtc': api_val
                         }
                     }
 
@@ -322,21 +307,21 @@ class UDPProxyChangerApp:
                             self._log(f'#{s}: FAILED - {m}'))
 
                     if total % 10 == 0:
-                        self.root.after(0, lambda t=total, s=success, f=failed, sk=skipped:
+                        self.root.after(0, lambda t=total, s=success, f=failed:
                             self.progress_label.configure(
-                                text=f'Progress: {t} done, {s} changed, {sk} skipped, {f} failed'))
+                                text=f'Progress: {t} done, {s} changed, {f} failed'))
 
                     time.sleep(0.5)
 
                 page += 1
 
             self.root.after(0, lambda: self._log(
-                f'DONE! {scope}: {success} changed to {target_type.upper()}. '
-                f'Skipped: {skipped}. Failed: {failed}. Total: {total}.'))
+                f'DONE! {scope}: {success} changed to {display_val}. '
+                f'Failed: {failed}. Total: {total}.'))
             self.root.after(0, lambda: self.progress_label.configure(
-                text=f'DONE: {success}/{total} changed to {target_type.upper()}'))
+                text=f'DONE: {success}/{total} changed to {display_val}'))
             self.root.after(0, lambda: self.start_btn.configure(
-                state='normal', text='CHANGE PROXY TYPE FOR FOLDER'))
+                state='normal', text='CHANGE WEBRTC FOR FOLDER'))
             self.running = False
 
         threading.Thread(target=do_change, daemon=True).start()
@@ -346,5 +331,5 @@ class UDPProxyChangerApp:
 
 
 if __name__ == '__main__':
-    app = UDPProxyChangerApp()
+    app = WebRTCChangerApp()
     app.run()
