@@ -1,6 +1,6 @@
 """
 Bulk WebRTC Changer for AdsPower
-Pick a folder, change WebRTC fingerprint to Proxy UDP for all profiles.
+Test values on a single profile, then bulk change a folder.
 """
 
 import tkinter as tk
@@ -41,18 +41,31 @@ def api_post(path, data=None):
         return {'code': -1, 'msg': str(e)}
 
 
+def find_profile(serial):
+    for attempt in range(3):
+        resp = api_get(f'/api/v1/user/list?serial_number={serial}')
+        if resp.get('code') == 0:
+            profiles = resp.get('data', {}).get('list', [])
+            if profiles:
+                return profiles[0].get('user_id', '')
+        if 'Too many request' in resp.get('msg', ''):
+            time.sleep(2)
+        else:
+            break
+    return ''
+
+
 class WebRTCChangerApp:
     def __init__(self):
         self.root = tk.Tk()
-        self.root.title('AdsPower Bulk WebRTC Changer')
-        self.root.geometry('550x520')
+        self.root.title('AdsPower WebRTC Changer')
+        self.root.geometry('550x550')
         self.root.resizable(True, True)
         self.root.configure(bg='#1a1a2e')
         self.running = False
         self.groups = {}
 
         self._build_ui()
-        self.root.after(500, self._load_groups)
 
     def _log(self, msg):
         ts = time.strftime('%H:%M:%S')
@@ -64,93 +77,120 @@ class WebRTCChangerApp:
         self.log_text.configure(state='disabled')
 
     def _build_ui(self):
-        tk.Label(self.root, text='BULK WEBRTC CHANGER',
+        tk.Label(self.root, text='WEBRTC CHANGER',
                  font=('Segoe UI', 16, 'bold'),
-                 fg='#e94560', bg='#1a1a2e').pack(pady=(15, 3))
+                 fg='#e94560', bg='#1a1a2e').pack(pady=(10, 3))
 
-        tk.Label(self.root, text='Change WebRTC fingerprint setting for all profiles in a folder',
-                 font=('Segoe UI', 9), fg='#8888aa', bg='#1a1a2e').pack(pady=(0, 10))
+        # Test section
+        tf = tk.LabelFrame(self.root, text=' Test Single Profile ',
+                 font=('Segoe UI', 9, 'bold'),
+                 fg='#FFD700', bg='#1a1a2e', padx=10, pady=5)
+        tf.pack(fill='x', padx=15, pady=(5, 5))
 
-        gf = tk.Frame(self.root, bg='#1a1a2e')
-        gf.pack(fill='x', padx=20, pady=5)
+        row1 = tk.Frame(tf, bg='#1a1a2e')
+        row1.pack(fill='x', pady=2)
+        tk.Label(row1, text='Profile #:', font=('Segoe UI', 10),
+                 fg='#fff', bg='#1a1a2e').pack(side='left')
+        self.serial_entry = tk.Entry(row1, font=('Consolas', 12), width=10,
+                                      bg='#0f3460', fg='#FFD700',
+                                      insertbackground='#FFD700', border=1)
+        self.serial_entry.pack(side='left', padx=(5, 10))
 
-        tk.Label(gf, text='Folder:', font=('Segoe UI', 11, 'bold'),
-                 fg='#FFD700', bg='#1a1a2e').pack(side='left')
+        values = ['forward', 'proxy', 'local', 'disabled', 'disable_udp']
+        for val in values:
+            tk.Button(row1, text=val, font=('Segoe UI', 8),
+                      fg='#fff', bg='#0f3460', border=0, padx=6, pady=2,
+                      cursor='hand2',
+                      command=lambda v=val: self._test_value(v)).pack(side='left', padx=2)
 
-        self.group_var = tk.StringVar(value='-- Loading groups --')
-        self.group_menu = tk.OptionMenu(gf, self.group_var, '-- Loading --')
-        self.group_menu.configure(font=('Segoe UI', 10), fg='#fff',
+        # Bulk section
+        bf = tk.LabelFrame(self.root, text=' Bulk Change Folder ',
+                 font=('Segoe UI', 9, 'bold'),
+                 fg='#FFD700', bg='#1a1a2e', padx=10, pady=5)
+        bf.pack(fill='x', padx=15, pady=(5, 5))
+
+        row2 = tk.Frame(bf, bg='#1a1a2e')
+        row2.pack(fill='x', pady=2)
+
+        tk.Label(row2, text='Folder:', font=('Segoe UI', 10),
+                 fg='#fff', bg='#1a1a2e').pack(side='left')
+        self.group_var = tk.StringVar(value='-- Click Load --')
+        self.group_menu = tk.OptionMenu(row2, self.group_var, '-- Click Load --')
+        self.group_menu.configure(font=('Segoe UI', 9), fg='#fff',
                                    bg='#0f3460', activebackground='#16213e',
-                                   highlightthickness=0, width=35, anchor='w')
-        self.group_menu.pack(side='left', padx=(8, 0), fill='x', expand=True)
-
-        tk.Button(gf, text='Reload', font=('Segoe UI', 8),
+                                   highlightthickness=0, width=25, anchor='w')
+        self.group_menu.pack(side='left', padx=(5, 5))
+        tk.Button(row2, text='Load', font=('Segoe UI', 8),
                   fg='#fff', bg='#0f3460', border=0, padx=8, pady=2,
-                  cursor='hand2', command=self._load_groups).pack(side='right', padx=(8, 0))
+                  cursor='hand2', command=self._load_groups).pack(side='left')
 
-        wf = tk.Frame(self.root, bg='#1a1a2e')
-        wf.pack(fill='x', padx=20, pady=5)
+        row3 = tk.Frame(bf, bg='#1a1a2e')
+        row3.pack(fill='x', pady=(5, 2))
 
-        tk.Label(wf, text='WebRTC:', font=('Segoe UI', 11, 'bold'),
-                 fg='#FFD700', bg='#1a1a2e').pack(side='left')
-
-        self.webrtc_var = tk.StringVar(value='Proxy UDP')
-        options = ['Proxy UDP', 'Forward', 'Replace', 'Real', 'Disabled']
-        option_menu = tk.OptionMenu(wf, self.webrtc_var, *options)
-        option_menu.configure(font=('Consolas', 13, 'bold'), fg='#FFD700',
+        tk.Label(row3, text='Value:', font=('Segoe UI', 10),
+                 fg='#fff', bg='#1a1a2e').pack(side='left')
+        self.bulk_var = tk.StringVar(value='proxy')
+        bulk_menu = tk.OptionMenu(row3, self.bulk_var, *values)
+        bulk_menu.configure(font=('Consolas', 11), fg='#FFD700',
                              bg='#0f3460', activebackground='#16213e',
                              highlightthickness=0, width=12)
-        option_menu.pack(side='left', padx=(8, 0))
+        bulk_menu.pack(side='left', padx=(5, 10))
 
-        bf = tk.Frame(self.root, bg='#1a1a2e')
-        bf.pack(pady=12)
-
-        self.start_btn = tk.Button(bf, text='CHANGE WEBRTC FOR FOLDER',
-                  font=('Segoe UI', 12, 'bold'),
+        self.start_btn = tk.Button(row3, text='CHANGE ALL',
+                  font=('Segoe UI', 10, 'bold'),
                   fg='#fff', bg='#e94560', activebackground='#ff6b8a',
-                  border=0, padx=20, pady=8,
-                  cursor='hand2', command=self._start_change)
-        self.start_btn.pack(side='left', padx=5)
-
-        tk.Button(bf, text='START TEST',
-                  font=('Segoe UI', 10, 'bold'),
-                  fg='#fff', bg='#0f3460', activebackground='#16213e',
-                  border=0, padx=12, pady=8,
-                  cursor='hand2', command=self._scan_profile).pack(side='left', padx=5)
-
-        tk.Button(bf, text='NEXT VALUE',
-                  font=('Segoe UI', 10, 'bold'),
-                  fg='#fff', bg='#0f3460', activebackground='#16213e',
-                  border=0, padx=12, pady=8,
-                  cursor='hand2', command=self._apply_next_value).pack(side='left', padx=5)
+                  border=0, padx=15, pady=4,
+                  cursor='hand2', command=self._start_bulk)
+        self.start_btn.pack(side='left')
 
         self.progress_label = tk.Label(self.root, text='',
-                 font=('Segoe UI', 11, 'bold'),
+                 font=('Segoe UI', 10, 'bold'),
                  fg='#44dd44', bg='#1a1a2e')
-        self.progress_label.pack(pady=3)
+        self.progress_label.pack(pady=2)
 
         lf = tk.Frame(self.root, bg='#1a1a2e')
-        lf.pack(fill='both', expand=True, padx=15, pady=(5, 15))
+        lf.pack(fill='both', expand=True, padx=15, pady=(2, 10))
         tk.Label(lf, text='Log', font=('Segoe UI', 8), fg='#8888aa', bg='#1a1a2e').pack(anchor='w')
         self.log_text = tk.Text(lf, font=('Consolas', 8), bg='#0a0a1a', fg='#44dd44',
                                 insertbackground='#44dd44', border=0, wrap='word', state='disabled')
         self.log_text.pack(fill='both', expand=True, pady=2)
 
-        self._log('Loading groups from AdsPower...')
+        self._log('Enter a profile # and click a value to test.')
+        self._log('Values: forward, proxy, local, disabled, disable_udp')
+        self._log('Check AdsPower after each click to see which = Proxy UDP')
 
-    def _get_api_value(self, display):
-        mapping = {
-            'Proxy UDP': 'proxy',
-            'Forward': 'forward',
-            'Replace': 'replace',
-            'Real': 'real',
-            'Disabled': 'disabled'
-        }
-        return mapping.get(display, 'proxy')
+    def _test_value(self, val):
+        serial = self.serial_entry.get().strip()
+        if not serial:
+            self._log('Enter a profile number first!')
+            return
+
+        def do_test():
+            self.root.after(0, lambda: self._log(
+                f'Finding profile #{serial}...'))
+            uid = find_profile(serial)
+            if not uid:
+                self.root.after(0, lambda: self._log(
+                    f'Profile #{serial} not found'))
+                return
+
+            r = api_post('/api/v1/user/update', {
+                'user_id': uid,
+                'fingerprint_config': {'webrtc': val}
+            })
+            code = r.get('code', -1)
+            msg = r.get('msg', '')
+            self.root.after(0, lambda: self._log(
+                f'SET #{serial} webrtc="{val}" => code={code} msg={msg}'))
+            self.root.after(0, lambda: self._log(
+                f'>> Check profile #{serial} in AdsPower now'))
+
+        threading.Thread(target=do_test, daemon=True).start()
 
     def _load_groups(self):
         def do_load():
             self.groups = {}
+            self.root.after(0, lambda: self._log('Loading folders...'))
 
             page = 1
             while True:
@@ -176,46 +216,11 @@ class WebRTCChangerApp:
                     gname = g.get('group_name', f'Group {gid}')
                     if gid:
                         self.groups[gname] = gid
-                self.root.after(0, lambda c=len(self.groups): self._log(
-                    f'Loading folders... {c} so far'))
-                page += 1
-                time.sleep(0.5)
-
-            if self.groups:
-                self.root.after(0, lambda: self._log(
-                    f'Loaded {len(self.groups)} group(s) from API'))
-            else:
-                self.root.after(0, lambda: self._log(
-                    'Group API empty. Scanning profiles for groups...'))
-
-            page = 1
-            while True:
-                r = None
-                for attempt in range(3):
-                    r = api_get(f'/api/v1/user/list?page={page}&page_size=100')
-                    if r.get('code') == 0:
-                        break
-                    if 'Too many request' in r.get('msg', ''):
-                        time.sleep(1.5)
-                    else:
-                        break
-
-                if r.get('code') != 0:
-                    break
-                lst = r.get('data', {}).get('list', [])
-                if not lst:
-                    break
-                for p in lst:
-                    gid = str(p.get('group_id', '0'))
-                    gname = p.get('group_name', '')
-                    if gname and gid and gname not in self.groups:
-                        self.groups[gname] = gid
                 page += 1
                 time.sleep(0.5)
 
             self.root.after(0, lambda: self._log(
-                f'Total: {len(self.groups)} folder(s) found'))
-
+                f'Loaded {len(self.groups)} folder(s)'))
             self.root.after(0, self._update_group_menu)
 
         threading.Thread(target=do_load, daemon=True).start()
@@ -236,100 +241,17 @@ class WebRTCChangerApp:
         else:
             self.group_var.set('--- ALL PROFILES ---')
 
-    def _scan_profile(self):
-        if self.running:
-            return
-        self.running = True
-
-        self._test_uid = ''
-        self._test_sn = ''
-        self._test_values = ['forward', 'proxy', 'local', 'disabled', 'disable_udp']
-        self._test_index = 0
-
-        def do_find():
-            selected = self.group_var.get()
-            group_id = self.groups.get(selected)
-
-            url = '/api/v1/user/list?page=1&page_size=1'
-            if group_id:
-                url += f'&group_id={group_id}'
-
-            resp = None
-            for attempt in range(5):
-                resp = api_get(url)
-                if resp.get('code') == 0:
-                    break
-                if 'Too many request' in resp.get('msg', ''):
-                    time.sleep(3)
-                else:
-                    break
-
-            if resp.get('code') != 0:
-                self.root.after(0, lambda: self._log(
-                    f'API error: {resp.get("msg", "")}'))
-                self.running = False
-                return
-
-            profiles = resp.get('data', {}).get('list', [])
-            if not profiles:
-                self.root.after(0, lambda: self._log('No profiles found'))
-                self.running = False
-                return
-
-            p = profiles[0]
-            self._test_uid = p.get('user_id', '')
-            self._test_sn = p.get('serial_number', '?')
-
-            self.root.after(0, lambda: self._log(
-                f'Using Profile #{self._test_sn}'))
-            self.root.after(0, lambda: self._log(
-                'Click "NEXT VALUE" to apply each value one by one.'))
-            self.root.after(0, lambda: self._log(
-                'Check AdsPower after each click to see what it shows.'))
-            self.root.after(0, self._apply_next_value)
-
-        threading.Thread(target=do_find, daemon=True).start()
-
-    def _apply_next_value(self):
-        if self._test_index >= len(self._test_values):
-            self._log('All values tested!')
-            self.running = False
-            return
-
-        val = self._test_values[self._test_index]
-
-        def do_apply():
-            time.sleep(1)
-            r = api_post('/api/v1/user/update', {
-                'user_id': self._test_uid,
-                'fingerprint_config': {'webrtc': val}
-            })
-            code = r.get('code', -1)
-            msg = r.get('msg', '')
-            self._test_index += 1
-            self.root.after(0, lambda: self._log(
-                f'SET webrtc="{val}" => code={code} msg={msg}'))
-            self.root.after(0, lambda: self._log(
-                f'>> Check Profile #{self._test_sn} in AdsPower now. What does WebRTC show?'))
-            self.root.after(0, lambda: self._log(
-                f'>> Then click "NEXT VALUE" to try the next one.'))
-
-        threading.Thread(target=do_apply, daemon=True).start()
-
-        threading.Thread(target=do_scan, daemon=True).start()
-
-    def _start_change(self):
+    def _start_bulk(self):
         if self.running:
             return
 
-        display_val = self.webrtc_var.get()
-        api_val = self._get_api_value(display_val)
+        target = self.bulk_var.get()
         selected = self.group_var.get()
         group_id = self.groups.get(selected)
         scope = selected if group_id else 'ALL PROFILES'
 
         if not messagebox.askyesno('Confirm',
-                f'Change WebRTC to {display_val}\n'
+                f'Change WebRTC to "{target}"\n'
                 f'for: {scope}?\n\n'
                 f'Open profiles need to be closed & reopened.'):
             return
@@ -338,7 +260,7 @@ class WebRTCChangerApp:
         self.start_btn.configure(state='disabled', text='Working...')
 
         def do_change():
-            time.sleep(3)
+            time.sleep(2)
             page = 1
             success = 0
             failed = 0
@@ -375,16 +297,12 @@ class WebRTCChangerApp:
                     sn = p.get('serial_number', '')
                     total += 1
 
-                    update_data = {
-                        'user_id': uid,
-                        'fingerprint_config': {
-                            'webrtc': api_val
-                        }
-                    }
-
                     update_resp = None
                     for attempt in range(3):
-                        update_resp = api_post('/api/v1/user/update', update_data)
+                        update_resp = api_post('/api/v1/user/update', {
+                            'user_id': uid,
+                            'fingerprint_config': {'webrtc': target}
+                        })
                         if update_resp.get('code') == 0:
                             break
                         if 'Too many request' in update_resp.get('msg', ''):
@@ -403,19 +321,19 @@ class WebRTCChangerApp:
                     if total % 10 == 0:
                         self.root.after(0, lambda t=total, s=success, f=failed:
                             self.progress_label.configure(
-                                text=f'Progress: {t} done, {s} changed, {f} failed'))
+                                text=f'Progress: {t} done, {s} ok, {f} failed'))
 
                     time.sleep(0.5)
 
                 page += 1
 
             self.root.after(0, lambda: self._log(
-                f'DONE! {scope}: {success} changed to {display_val}. '
+                f'DONE! {scope}: {success} changed. '
                 f'Failed: {failed}. Total: {total}.'))
             self.root.after(0, lambda: self.progress_label.configure(
-                text=f'DONE: {success}/{total} changed to {display_val}'))
+                text=f'DONE: {success}/{total} changed'))
             self.root.after(0, lambda: self.start_btn.configure(
-                state='normal', text='CHANGE WEBRTC FOR FOLDER'))
+                state='normal', text='CHANGE ALL'))
             self.running = False
 
         threading.Thread(target=do_change, daemon=True).start()
