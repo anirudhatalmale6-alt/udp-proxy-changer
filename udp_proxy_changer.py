@@ -110,7 +110,13 @@ class WebRTCChangerApp:
                   fg='#fff', bg='#e94560', activebackground='#ff6b8a',
                   border=0, padx=20, pady=8,
                   cursor='hand2', command=self._start_change)
-        self.start_btn.pack()
+        self.start_btn.pack(side='left', padx=5)
+
+        tk.Button(bf, text='SCAN 1 PROFILE',
+                  font=('Segoe UI', 10, 'bold'),
+                  fg='#fff', bg='#0f3460', activebackground='#16213e',
+                  border=0, padx=12, pady=8,
+                  cursor='hand2', command=self._scan_profile).pack(side='left', padx=5)
 
         self.progress_label = tk.Label(self.root, text='',
                  font=('Segoe UI', 11, 'bold'),
@@ -223,6 +229,58 @@ class WebRTCChangerApp:
             self.group_var.set(sorted(self.groups.keys())[0])
         else:
             self.group_var.set('--- ALL PROFILES ---')
+
+    def _scan_profile(self):
+        if self.running:
+            return
+
+        def do_scan():
+            selected = self.group_var.get()
+            group_id = self.groups.get(selected)
+
+            url = '/api/v1/user/list?page=1&page_size=1'
+            if group_id:
+                url += f'&group_id={group_id}'
+
+            resp = None
+            for attempt in range(5):
+                resp = api_get(url)
+                if resp.get('code') == 0:
+                    break
+                if 'Too many request' in resp.get('msg', ''):
+                    time.sleep(3)
+                else:
+                    break
+
+            if resp.get('code') != 0:
+                self.root.after(0, lambda: self._log(
+                    f'API error: {resp.get("msg", "")}'))
+                return
+
+            profiles = resp.get('data', {}).get('list', [])
+            if not profiles:
+                self.root.after(0, lambda: self._log('No profiles found'))
+                return
+
+            p = profiles[0]
+            sn = p.get('serial_number', '?')
+            fp = p.get('fingerprint_config', {})
+
+            self.root.after(0, lambda: self._log(
+                f'--- Profile #{sn} fingerprint_config ---'))
+
+            for key in sorted(fp.keys()):
+                val = fp[key]
+                if isinstance(val, dict):
+                    self.root.after(0, lambda k=key, v=json.dumps(val):
+                        self._log(f'  {k}: {v}'))
+                else:
+                    self.root.after(0, lambda k=key, v=val:
+                        self._log(f'  {k}: {v}'))
+
+            self.root.after(0, lambda: self._log('--- End of config ---'))
+
+        threading.Thread(target=do_scan, daemon=True).start()
 
     def _start_change(self):
         if self.running:
